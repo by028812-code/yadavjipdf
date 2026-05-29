@@ -1,7 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
+import PDFParser from 'pdf2json'
 
 export const maxDuration = 60
+
+function extractTextFromPdf(bytes: ArrayBuffer): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const parser = new PDFParser(null, 1)
+    parser.on('pdfParser_dataReady', () => {
+      const text = parser.getRawTextContent()
+      parser.destroy()
+      resolve(text || '')
+    })
+    parser.on('pdfParser_dataError', (err: { parserError: Error } | Error) => {
+      parser.destroy()
+      const error = err instanceof Error ? err : (err as { parserError: Error }).parserError
+      reject(error)
+    })
+    parser.parseBuffer(Buffer.from(bytes))
+  })
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,26 +35,7 @@ export async function POST(req: NextRequest) {
     }
 
     const bytes = await file.arrayBuffer()
-
-    // Extract text from PDF using pdf-parse with Vercel workaround
-    let text = ''
-    try {
-      // Dynamic import of pdf-parse core parser (bypasses test file loading on serverless)
-      const pdfParseModule = await import('pdf-parse/lib/pdf-parse.js')
-      const pdfParse = pdfParseModule.default || pdfParseModule
-      const data = await pdfParse(Buffer.from(bytes))
-      text = data.text || ''
-    } catch (importErr) {
-      // Fallback: try full pdf-parse module
-      try {
-        const pdfParseModule = await import('pdf-parse')
-        const pdfParse = pdfParseModule.default || pdfParseModule
-        const data = await pdfParse(Buffer.from(bytes))
-        text = data.text || ''
-      } catch (fallbackErr) {
-        console.error('[pdf-to-word] pdf-parse import failed:', fallbackErr)
-      }
-    }
+    const text = await extractTextFromPdf(bytes)
 
     if (!text || text.trim().length === 0) {
       return NextResponse.json(
@@ -45,10 +44,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Create DOCX using docx library
     const paragraphs: Paragraph[] = []
 
-    // Title
     paragraphs.push(
       new Paragraph({
         text: file.name.replace(/\.pdf$/i, ''),
@@ -61,17 +58,10 @@ export async function POST(req: NextRequest) {
 
     for (const line of lines) {
       const trimmed = line.trim()
-
       if (trimmed.length < 60 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
         paragraphs.push(
           new Paragraph({
-            children: [
-              new TextRun({
-                text: trimmed,
-                bold: true,
-                size: 28,
-              }),
-            ],
+            children: [new TextRun({ text: trimmed, bold: true, size: 28 })],
             heading: HeadingLevel.HEADING_2,
             spacing: { before: 240, after: 120 },
           })
@@ -79,12 +69,7 @@ export async function POST(req: NextRequest) {
       } else {
         paragraphs.push(
           new Paragraph({
-            children: [
-              new TextRun({
-                text: trimmed,
-                size: 22,
-              }),
-            ],
+            children: [new TextRun({ text: trimmed, size: 22 })],
             spacing: { after: 120 },
           })
         )
@@ -92,10 +77,7 @@ export async function POST(req: NextRequest) {
     }
 
     const doc = new Document({
-      sections: [{
-        properties: {},
-        children: paragraphs,
-      }],
+      sections: [{ properties: {}, children: paragraphs }],
     })
 
     const docxBuffer = await Packer.toBuffer(doc)

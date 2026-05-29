@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  serverExternalPackages: ['mammoth', 'exceljs', 'pdf-parse', 'docx'],
+  serverExternalPackages: ['mammoth', 'exceljs', 'pdf2json', 'docx'],
 };
 
 export default nextConfig;
