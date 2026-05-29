@@ -16,6 +16,11 @@ export function Footer() {
               Made in India 🇮🇳 — Your trusted online PDF toolkit. 
               All processing happens on Indian servers with complete data privacy.
             </p>
+            <div className="mt-3 pt-3 border-t border-blue-800">
+              <p className="text-xs text-blue-400">Developed & Designed by</p>
+              <p className="text-sm font-semibold text-white">Brijesh Yadav</p>
+              <p className="text-xs text-blue-400">Idea & Concept by Brijesh Yadav</p>
+            </div>
           </div>
 
           <div>
@@ -41,7 +46,7 @@ export function Footer() {
 
         <div className="border-t border-blue-800 mt-8 pt-6 text-center">
           <p className="text-sm text-blue-400">
-            © {new Date().getFullYear()} YadavjiPDF — Made with ❤️ in India | Powered by Z.ai
+            © {new Date().getFullYear()} YadavjiPDF — Made with ❤️ in India | Developed by Brijesh Yadav
           </p>
         </div>
       </div>

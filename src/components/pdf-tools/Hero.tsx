@@ -39,6 +39,9 @@ export function Hero() {
             All your PDF operations in one place. Fast, secure, and free. 
             Your files never leave our Indian servers — privacy is our promise.
           </p>
+          <p className="text-xs text-blue-300 font-medium">
+            Developed & Idea by Brijesh Yadav
+          </p>
 
           {/* Trust badges */}
           <div className="flex flex-wrap justify-center gap-4 md:gap-8">
