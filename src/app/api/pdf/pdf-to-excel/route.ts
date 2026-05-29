@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
-import pdf from 'pdf-parse'
+import { PDFParse } from 'pdf-parse'
 import ExcelJS from 'exceljs'
 
 const DOWNLOAD_DIR = join(process.cwd(), 'download')
@@ -26,8 +26,9 @@ export async function POST(req: NextRequest) {
     const bytes = await file.arrayBuffer()
 
     // Extract text from PDF using pdf-parse
-    const pdfData = await pdf(Buffer.from(bytes))
-    const text = pdfData.text
+    const parser = new PDFParse(Buffer.from(bytes))
+    const pdfData = await parser.getText()
+    const text = pdfData
 
     if (!text || text.trim().length === 0) {
       return NextResponse.json(
