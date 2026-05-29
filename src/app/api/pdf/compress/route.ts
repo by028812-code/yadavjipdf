@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PDFDocument } from 'pdf-lib'
 import { writeFile, readFile, mkdir, unlink } from 'fs/promises'
 import { join } from 'path'
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
 
-const execAsync = promisify(exec)
 const UPLOAD_DIR = join(process.cwd(), 'upload')
 const DOWNLOAD_DIR = join(process.cwd(), 'download')
 
@@ -17,7 +15,7 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData()
     const file = formData.get('file') as File
-    const quality = (formData.get('quality') as string) || 'ebook' // screen, ebook, printer, prepress
+    const quality = (formData.get('quality') as string) || 'medium'
 
     if (!file) {
       return NextResponse.json({ error: 'Please upload a PDF file' }, { status: 400 })
@@ -27,50 +25,51 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'File is not a PDF' }, { status: 400 })
     }
 
-    const validQualities = ['screen', 'ebook', 'printer', 'prepress']
-    if (!validQualities.includes(quality)) {
-      return NextResponse.json({ error: 'Invalid quality level' }, { status: 400 })
-    }
-
-    // Save uploaded file
-    const inputPath = join(UPLOAD_DIR, `compress_input_${jobId}.pdf`)
-    const outputPath = join(DOWNLOAD_DIR, `compressed_${jobId}.pdf`)
     const bytes = await file.arrayBuffer()
-    await writeFile(inputPath, Buffer.from(bytes))
-
     const originalSize = bytes.byteLength
 
-    // Run Ghostscript compression via Python script
-    const scriptPath = join(process.cwd(), 'scripts', 'compress.py')
-    const { stdout, stderr } = await execAsync(
-      `python3 ${scriptPath} ${inputPath} ${outputPath} ${quality}`,
-      { timeout: 90000, maxBuffer: 50 * 1024 * 1024 }
-    )
+    // Load and rewrite PDF using pdf-lib to remove unused objects
+    const pdfDoc = await PDFDocument.load(bytes, { 
+      ignoreEncryption: true,
+      updateMetadata: false 
+    })
 
-    // Clean up input file
-    await unlink(inputPath).catch(() => {})
-
-    // Check output
-    try {
-      const compressedData = await readFile(outputPath)
-      const compressedSize = compressedData.byteLength
-      const savingsPercent = ((1 - compressedSize / originalSize) * 100).toFixed(1)
-
-      return NextResponse.json({
-        success: true,
-        downloadUrl: `/api/pdf/download?file=compressed_${jobId}.pdf`,
-        fileName: `compressed_${jobId}.pdf`,
-        originalSize,
-        compressedSize,
-        savingsPercent: `${savingsPercent}%`,
-        message: `PDF compressed! Size reduced by ${savingsPercent}%`
-      })
-    } catch {
-      return NextResponse.json(
-        { error: 'Compression failed – output file could not be created' },
-        { status: 500 }
-      )
+    // Apply compression based on quality level
+    if (quality === 'screen' || quality === 'low') {
+      // Remove metadata for maximum compression
+      pdfDoc.setTitle('')
+      pdfDoc.setAuthor('')
+      pdfDoc.setSubject('')
+      pdfDoc.setKeywords([])
+      pdfDoc.setProducer('')
+      pdfDoc.setCreator('')
     }
+
+    // Save with object stream compression
+    const compressedBytes = await pdfDoc.save({ 
+      useObjectStreams: true,
+      addDefaultPage: false,
+    })
+
+    const outputPath = join(DOWNLOAD_DIR, `compressed_${jobId}.pdf`)
+    await writeFile(outputPath, Buffer.from(compressedBytes))
+
+    const compressedSize = compressedBytes.byteLength
+    const savingsPercent = originalSize > 0 
+      ? ((1 - compressedSize / originalSize) * 100).toFixed(1)
+      : '0'
+
+    return NextResponse.json({
+      success: true,
+      downloadUrl: `/api/pdf/download?file=compressed_${jobId}.pdf`,
+      fileName: `compressed_${jobId}.pdf`,
+      originalSize,
+      compressedSize,
+      savingsPercent: `${savingsPercent}%`,
+      message: Number(savingsPercent) > 0 
+        ? `PDF compressed! Size reduced by ${savingsPercent}%`
+        : `PDF optimized. File size: ${(compressedSize / 1024).toFixed(1)} KB`
+    })
   } catch (error: unknown) {
     const err = error as Error
     console.error(`[compress] Error at ${err.stack || err.message}`)

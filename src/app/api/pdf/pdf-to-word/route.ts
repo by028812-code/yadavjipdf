@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, readFile, mkdir, unlink } from 'fs/promises'
+import { writeFile, readFile, mkdir } from 'fs/promises'
 import { join } from 'path'
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
+import pdf from 'pdf-parse'
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
 
-const execAsync = promisify(exec)
 const UPLOAD_DIR = join(process.cwd(), 'upload')
 const DOWNLOAD_DIR = join(process.cwd(), 'download')
 
@@ -26,38 +25,84 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'File is not a PDF' }, { status: 400 })
     }
 
-    // Save uploaded file
-    const inputPath = join(UPLOAD_DIR, `pdf2word_input_${jobId}.pdf`)
-    const outputPath = join(DOWNLOAD_DIR, `converted_${jobId}.docx`)
     const bytes = await file.arrayBuffer()
-    await writeFile(inputPath, Buffer.from(bytes))
 
-    // Convert using pdf2docx via Python script
-    const scriptPath = join(process.cwd(), 'scripts', 'pdf_to_word.py')
-    const { stdout, stderr } = await execAsync(
-      `python3 ${scriptPath} ${inputPath} ${outputPath}`,
-      { timeout: 90000, maxBuffer: 50 * 1024 * 1024 }
-    )
+    // Extract text from PDF using pdf-parse
+    const pdfData = await pdf(Buffer.from(bytes))
+    const text = pdfData.text
 
-    // Clean up input file
-    await unlink(inputPath).catch(() => {})
-
-    // Verify output exists
-    try {
-      await readFile(outputPath)
-    } catch {
+    if (!text || text.trim().length === 0) {
       return NextResponse.json(
-        { error: 'Conversion failed – Please recheck your file.' },
-        { status: 500 }
+        { error: 'Could not extract text from this PDF. It may be image-based.' },
+        { status: 400 }
       )
     }
+
+    // Create DOCX using docx library
+    const paragraphs: Paragraph[] = []
+    
+    // Title
+    paragraphs.push(
+      new Paragraph({
+        text: file.name.replace(/\.pdf$/i, ''),
+        heading: HeadingLevel.HEADING_1,
+        spacing: { after: 400 },
+      })
+    )
+
+    // Split text into paragraphs and add to document
+    const lines = text.split(/\n+/).filter(line => line.trim().length > 0)
+    
+    for (const line of lines) {
+      const trimmed = line.trim()
+      
+      // Detect if it's a heading (short line, possibly all caps or larger)
+      if (trimmed.length < 60 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: trimmed,
+                bold: true,
+                size: 28,
+              }),
+            ],
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 240, after: 120 },
+          })
+        )
+      } else {
+        paragraphs.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: trimmed,
+                size: 22,
+              }),
+            ],
+            spacing: { after: 120 },
+          })
+        )
+      }
+    }
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: paragraphs,
+      }],
+    })
+
+    const docxBuffer = await Packer.toBuffer(doc)
+    const outputPath = join(DOWNLOAD_DIR, `converted_${jobId}.docx`)
+    await writeFile(outputPath, docxBuffer)
 
     const outputFileName = `converted_${jobId}.docx`
     return NextResponse.json({
       success: true,
       downloadUrl: `/api/pdf/download?file=${outputFileName}`,
       fileName: outputFileName,
-      message: 'Successfully converted PDF to Word document'
+      message: `Successfully converted PDF to Word (${lines.length} paragraphs extracted)`
     })
   } catch (error: unknown) {
     const err = error as Error
