@@ -2,12 +2,13 @@
 
 import { useState } from 'react'
 import { Upload, X, FileText, Loader2, Download, CheckCircle, Info } from 'lucide-react'
+import { downloadFromApi, triggerDownload } from '@/lib/download-utils'
 
 export function SplitPdfTool() {
   const [file, setFile] = useState<File | null>(null)
   const [pages, setPages] = useState('')
   const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState<{ downloadUrl: string; fileName: string; message: string; totalPages?: number; extractedPages?: number } | null>(null)
+  const [result, setResult] = useState<{ message: string; totalPages?: number; extractedPages?: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleFile = (f: File) => {
@@ -31,10 +32,9 @@ export function SplitPdfTool() {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('pages', pages)
-      const res = await fetch('/api/pdf/split', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Split failed')
-      setResult(data)
+      const res = await downloadFromApi('/api/pdf/split', formData)
+      setResult({ message: res.message, totalPages: res.totalPages, extractedPages: res.extractedPages })
+      triggerDownload(res.blob, res.fileName)
     } catch (err: unknown) {
       const e = err as Error
       setError(e.message || 'Processing failed – Please recheck your file.')
@@ -128,13 +128,6 @@ export function SplitPdfTool() {
               </p>
             )}
           </div>
-          <a
-            href={result.downloadUrl}
-            className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            Download
-          </a>
         </div>
       )}
 

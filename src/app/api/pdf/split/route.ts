@@ -1,16 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PDFDocument } from 'pdf-lib'
-import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
-import { v4 as uuidv4 } from 'uuid'
-
-const DOWNLOAD_DIR = join(process.cwd(), 'download')
 
 export async function POST(req: NextRequest) {
-  const jobId = uuidv4()
   try {
-    await mkdir(DOWNLOAD_DIR, { recursive: true })
-
     const formData = await req.formData()
     const file = formData.get('file') as File
     const pagesStr = formData.get('pages') as string
@@ -27,7 +19,6 @@ export async function POST(req: NextRequest) {
     const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
     const totalPages = pdfDoc.getPageCount()
 
-    // Parse page ranges (e.g., "1-3,5,7-9")
     let pageIndices: number[] = []
     if (pagesStr && pagesStr.trim()) {
       const parts = pagesStr.split(',').map(s => s.trim()).filter(Boolean)
@@ -41,7 +32,7 @@ export async function POST(req: NextRequest) {
             )
           }
           for (let i = start; i <= end; i++) {
-            pageIndices.push(i - 1) // Convert to 0-indexed
+            pageIndices.push(i - 1)
           }
         } else {
           const pageNum = Number(part)
@@ -55,7 +46,6 @@ export async function POST(req: NextRequest) {
         }
       }
     } else {
-      // Default: extract all pages
       pageIndices = Array.from({ length: totalPages }, (_, i) => i)
     }
 
@@ -63,7 +53,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No valid pages specified' }, { status: 400 })
     }
 
-    // Remove duplicates and sort
     pageIndices = [...new Set(pageIndices)].sort((a, b) => a - b)
 
     const splitPdf = await PDFDocument.create()
@@ -73,20 +62,20 @@ export async function POST(req: NextRequest) {
     }
 
     const splitBytes = await splitPdf.save()
-    const outputPath = join(DOWNLOAD_DIR, `split_${jobId}.pdf`)
-    await writeFile(outputPath, Buffer.from(splitBytes))
 
-    return NextResponse.json({
-      success: true,
-      downloadUrl: `/api/pdf/download?file=split_${jobId}.pdf`,
-      fileName: `split_${jobId}.pdf`,
-      message: `Successfully extracted ${pageIndices.length} pages from ${totalPages} total pages`,
-      totalPages,
-      extractedPages: pageIndices.length
+    return new NextResponse(splitBytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="split.pdf"',
+        'X-Message': `Successfully extracted ${pageIndices.length} pages from ${totalPages} total pages`,
+        'X-Total-Pages': String(totalPages),
+        'X-Extracted-Pages': String(pageIndices.length),
+      },
     })
   } catch (error: unknown) {
     const err = error as Error
-    console.error(`[split] Error at ${err.stack || err.message}`)
+    console.error(`[split] Error: ${err.stack || err.message}`)
     return NextResponse.json(
       { error: 'Processing failed – Please recheck your file.' },
       { status: 500 }

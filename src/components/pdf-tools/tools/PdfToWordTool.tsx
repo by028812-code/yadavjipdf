@@ -2,11 +2,12 @@
 
 import { useState } from 'react'
 import { Upload, X, FileText, Loader2, Download, CheckCircle } from 'lucide-react'
+import { downloadFromApi, triggerDownload } from '@/lib/download-utils'
 
 export function PdfToWordTool() {
   const [file, setFile] = useState<File | null>(null)
   const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState<{ downloadUrl: string; fileName: string; message: string } | null>(null)
+  const [result, setResult] = useState<{ message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleFile = (f: File) => {
@@ -29,10 +30,9 @@ export function PdfToWordTool() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('/api/pdf/pdf-to-word', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Conversion failed')
-      setResult(data)
+      const res = await downloadFromApi('/api/pdf/pdf-to-word', formData)
+      setResult({ message: res.message })
+      triggerDownload(res.blob, res.fileName)
     } catch (err: unknown) {
       const e = err as Error
       setError(e.message || 'Processing failed – Please recheck your file.')
@@ -89,7 +89,7 @@ export function PdfToWordTool() {
       )}
 
       <div className="bg-violet-50 rounded-lg p-3 text-sm text-violet-700">
-        <strong>Powered by pdf2docx</strong> — Your PDF is converted to an editable Word document using the open-source pdf2docx library on our secure Indian servers.
+        <strong>Made in India</strong> — Your PDF is converted to an editable Word document securely on our servers. Your files are never stored.
       </div>
 
       {/* Error */}
@@ -106,13 +106,7 @@ export function PdfToWordTool() {
           <div className="flex-1">
             <p className="text-sm font-medium text-green-800">{result.message}</p>
           </div>
-          <a
-            href={result.downloadUrl}
-            className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            Download DOCX
-          </a>
+          <p className="text-xs text-green-600">Downloaded!</p>
         </div>
       )}
 

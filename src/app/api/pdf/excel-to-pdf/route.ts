@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
-import { v4 as uuidv4 } from 'uuid'
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import ExcelJS from 'exceljs'
-import PDFDocument from 'pdfkit'
-
-const DOWNLOAD_DIR = join(process.cwd(), 'download')
 
 export async function POST(req: NextRequest) {
-  const jobId = uuidv4()
   try {
-    await mkdir(DOWNLOAD_DIR, { recursive: true })
-
     const formData = await req.formData()
     const file = formData.get('file') as File
 
@@ -31,107 +23,118 @@ export async function POST(req: NextRequest) {
 
     // Read spreadsheet using ExcelJS
     const workbook = new ExcelJS.Workbook()
-    
+
     if (ext === '.csv') {
       await workbook.csv.read(Buffer.from(bytes))
     } else {
       await workbook.xlsx.load(Buffer.from(bytes))
     }
 
-    // Generate PDF using PDFKit
-    const outputPath = join(DOWNLOAD_DIR, `excel_to_pdf_${jobId}.pdf`)
-    
-    await new Promise<void>((resolve, reject) => {
-      const doc = new PDFDocument({
-        size: 'A4',
-        margins: { top: 50, bottom: 50, left: 40, right: 40 },
-        layout: 'landscape',
-      })
-      
-      const chunks: Buffer[] = []
-      doc.on('data', (chunk: Buffer) => chunks.push(chunk))
-      doc.on('end', () => {
-        writeFile(outputPath, Buffer.concat(chunks))
-          .then(() => resolve())
-          .catch(reject)
-      })
-      doc.on('error', reject)
+    // Generate PDF using pdf-lib
+    const pdfDoc = await PDFDocument.create()
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
+    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
 
-      // Title
-      doc.fontSize(16).font('Helvetica-Bold').text(file.name.replace(/\.[^.]+$/, ''), {
-        align: 'center',
-      })
-      doc.moveDown(1)
+    const pageWidth = 841.89 // A4 landscape
+    const pageHeight = 595.28
+    const margin = 40
+    const headerFontSize = 7
+    const cellFontSize = 7
+    const rowHeight = 14
 
-      // Process each worksheet
-      workbook.eachSheet((worksheet, sheetId) => {
-        if (sheetId > 1) {
-          doc.addPage({ layout: 'landscape' })
+    let isFirstSheet = true
+
+    workbook.eachSheet((worksheet) => {
+      if (!isFirstSheet) {
+        pdfDoc.addPage([pageWidth, pageHeight])
+      }
+      isFirstSheet = false
+
+      let page = pdfDoc.pages[pdfDoc.getPageCount() - 1]
+      let y = pageHeight - margin
+
+      // Sheet title
+      const titleText = `${file.name.replace(/\.[^.]+$/, '')} - ${worksheet.name}`
+      const titleWidth = boldFont.widthOfTextAtSize(titleText, 12)
+      page.drawText(titleText, {
+        x: (pageWidth - titleWidth) / 2,
+        y,
+        size: 12,
+        font: boldFont,
+        color: rgb(0.1, 0.1, 0.1),
+      })
+      y -= 24
+
+      const colCount = worksheet.columnCount || 1
+      const availableWidth = pageWidth - 2 * margin
+      const colWidth = Math.min(availableWidth / colCount, 130)
+
+      // Draw header row background
+      const headerRow = worksheet.getRow(1)
+      if (headerRow) {
+        page.drawRectangle({
+          x: margin,
+          y: y - rowHeight + 4,
+          width: availableWidth,
+          height: rowHeight,
+          color: rgb(0.91, 0.94, 1.0), // light blue
+        })
+
+        let x = margin
+        headerRow.eachCell((cell) => {
+          const cellText = String(cell.value || '').substring(0, 20)
+          const truncated = cellText.length >= 20 ? cellText + '..' : cellText
+          page.drawText(truncated, {
+            x: x + 3,
+            y,
+            size: headerFontSize,
+            font: boldFont,
+            color: rgb(0.1, 0.1, 0.1),
+          })
+          x += colWidth
+        })
+        y -= rowHeight
+      }
+
+      // Draw data rows
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return // skip header
+
+        if (y < margin + rowHeight) {
+          page = pdfDoc.addPage([pageWidth, pageHeight])
+          y = pageHeight - margin
         }
 
-        doc.fontSize(12).font('Helvetica-Bold').text(`Sheet: ${worksheet.name}`)
-        doc.moveDown(0.5)
-
-        const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right
-        const colCount = worksheet.columnCount || 1
-        const colWidth = Math.min(pageWidth / colCount, 150)
-
-        let y = doc.y
-
-        worksheet.eachRow((row, rowNumber) => {
-          // Check if we need a new page
-          if (y > doc.page.height - doc.page.margins.bottom - 20) {
-            doc.addPage({ layout: 'landscape' })
-            y = doc.page.margins.top
-          }
-
-          let x = doc.page.margins.left
-          const isHeader = rowNumber === 1
-
-          row.eachCell((cell, colNumber) => {
-            const cellText = String(cell.value || '')
-            const truncated = cellText.length > 25 ? cellText.substring(0, 25) + '...' : cellText
-
-            if (isHeader) {
-              doc.fontSize(8).font('Helvetica-Bold')
-            } else {
-              doc.fontSize(7).font('Helvetica')
-            }
-
-            // Draw cell background for header
-            if (isHeader) {
-              doc.save()
-              doc.rect(x, y - 8, colWidth, 14).fill('#E8F0FE')
-              doc.restore()
-              doc.fillColor('#1a1a1a')
-            }
-
-            doc.text(truncated, x + 2, y - 6, {
-              width: colWidth - 4,
-              height: 12,
-              ellipsis: true,
-            })
-
-            x += colWidth
+        let x = margin
+        row.eachCell((cell) => {
+          const cellText = String(cell.value || '').substring(0, 20)
+          const truncated = cellText.length >= 20 ? cellText + '..' : cellText
+          page.drawText(truncated, {
+            x: x + 3,
+            y,
+            size: cellFontSize,
+            font,
+            color: rgb(0.15, 0.15, 0.15),
           })
-
-          y += 16
+          x += colWidth
         })
+        y -= rowHeight
       })
-
-      doc.end()
     })
 
-    const outputFileName = `excel_to_pdf_${jobId}.pdf`
-    return NextResponse.json({
-      success: true,
-      downloadUrl: `/api/pdf/download?file=${outputFileName}`,
-      fileName: outputFileName,
-      message: 'Successfully converted spreadsheet to PDF'
+    const pdfBytes = await pdfDoc.save()
+
+    return new NextResponse(pdfBytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="converted.pdf"',
+        'X-Message': 'Successfully converted spreadsheet to PDF',
+      },
     })
   } catch (error: unknown) {
     const err = error as Error
-    console.error(`[excel-to-pdf] Error at ${err.stack || err.message}`)
+    console.error(`[excel-to-pdf] Error: ${err.stack || err.message}`)
     return NextResponse.json(
       { error: 'Processing failed – Please recheck your file.' },
       { status: 500 }

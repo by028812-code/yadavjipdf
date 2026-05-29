@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
-import { v4 as uuidv4 } from 'uuid'
 import { PDFParse } from 'pdf-parse'
 import ExcelJS from 'exceljs'
 
-const DOWNLOAD_DIR = join(process.cwd(), 'download')
-
 export async function POST(req: NextRequest) {
-  const jobId = uuidv4()
   try {
-    await mkdir(DOWNLOAD_DIR, { recursive: true })
-
     const formData = await req.formData()
     const file = formData.get('file') as File
 
@@ -26,9 +18,8 @@ export async function POST(req: NextRequest) {
     const bytes = await file.arrayBuffer()
 
     // Extract text from PDF using pdf-parse
-    const parser = new PDFParse(Buffer.from(bytes))
-    const pdfData = await parser.getText()
-    const text = pdfData
+    const parser = new PDFParse(new Uint8Array(bytes))
+    const text = await parser.getText()
 
     if (!text || text.trim().length === 0) {
       return NextResponse.json(
@@ -37,20 +28,17 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Parse text into table-like structure
     const lines = text.split('\n').filter(line => line.trim().length > 0)
-    
-    // Try to detect tabular data (lines with multiple spaces/tabs as column separators)
+
     const rows: string[][] = []
     let maxCols = 1
 
     for (const line of lines) {
-      // Split by multiple spaces or tabs
       const cells = line
         .split(/\s{2,}|\t/)
         .map(cell => cell.trim())
         .filter(cell => cell.length > 0)
-      
+
       if (cells.length > 1) {
         rows.push(cells)
         maxCols = Math.max(maxCols, cells.length)
@@ -63,7 +51,6 @@ export async function POST(req: NextRequest) {
     const workbook = new ExcelJS.Workbook()
     const worksheet = workbook.addWorksheet('Extracted Data')
 
-    // Set columns
     const columns = Array.from({ length: maxCols }, (_, i) => ({
       header: `Column ${i + 1}`,
       key: `col${i}`,
@@ -71,7 +58,6 @@ export async function POST(req: NextRequest) {
     }))
     worksheet.columns = columns
 
-    // Style header
     const headerRow = worksheet.getRow(1)
     headerRow.font = { bold: true, color: { argb: 'FF1a1a1a' } }
     headerRow.fill = {
@@ -81,7 +67,6 @@ export async function POST(req: NextRequest) {
     }
     headerRow.alignment = { horizontal: 'center' }
 
-    // Add data rows
     for (const row of rows) {
       const rowData: Record<string, string> = {}
       row.forEach((cell, i) => {
@@ -90,7 +75,6 @@ export async function POST(req: NextRequest) {
       worksheet.addRow(rowData)
     }
 
-    // Auto-fit column widths
     worksheet.columns.forEach((column) => {
       let maxLength = 10
       column.eachCell?.((cell) => {
@@ -100,21 +84,19 @@ export async function POST(req: NextRequest) {
       column.width = Math.min(maxLength, 50)
     })
 
-    // Write to buffer
     const buffer = await workbook.xlsx.writeBuffer()
-    const outputPath = join(DOWNLOAD_DIR, `converted_${jobId}.xlsx`)
-    await writeFile(outputPath, Buffer.from(buffer))
 
-    const outputFileName = `converted_${jobId}.xlsx`
-    return NextResponse.json({
-      success: true,
-      downloadUrl: `/api/pdf/download?file=${outputFileName}`,
-      fileName: outputFileName,
-      message: `Successfully extracted ${rows.length} rows from PDF to Excel`
+    return new NextResponse(buffer, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': 'attachment; filename="converted.xlsx"',
+        'X-Message': `Successfully extracted ${rows.length} rows from PDF to Excel`,
+      },
     })
   } catch (error: unknown) {
     const err = error as Error
-    console.error(`[pdf-to-excel] Error at ${err.stack || err.message}`)
+    console.error(`[pdf-to-excel] Error: ${err.stack || err.message}`)
     return NextResponse.json(
       { error: 'Processing failed – Please recheck your file.' },
       { status: 500 }

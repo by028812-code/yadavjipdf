@@ -2,27 +2,58 @@
 
 import { useState, useCallback } from 'react'
 import { Upload, X, ImageIcon, Loader2, Download, CheckCircle } from 'lucide-react'
+import { downloadFromApi, triggerDownload } from '@/lib/download-utils'
 
 export function ImageToPdfTool() {
   const [files, setFiles] = useState<File[]>([])
   const [orientation, setOrientation] = useState('portrait')
   const [pageSize, setPageSize] = useState('a4')
   const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState<{ downloadUrl: string; fileName: string; message: string } | null>(null)
+  const [result, setResult] = useState<{ message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
 
-  const handleFiles = useCallback((newFiles: FileList | File[]) => {
+  const handleFiles = useCallback(async (newFiles: FileList | File[]) => {
     const imageFiles = Array.from(newFiles).filter((f) =>
       f.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|bmp|tiff?)$/i.test(f.name)
     )
     if (imageFiles.length === 0) {
-      setError('Please select image files (JPG, PNG, WebP)')
+      setError('Please select image files (JPG, PNG)')
       return
     }
     setError(null)
     setResult(null)
-    setFiles((prev) => [...prev, ...imageFiles])
+
+    // Convert non-JPG/PNG images to PNG using Canvas before adding
+    const convertedFiles: File[] = []
+    for (const f of imageFiles) {
+      const ext = f.name.toLowerCase().slice(f.name.lastIndexOf('.'))
+      if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+        convertedFiles.push(f)
+      } else {
+        // Convert to PNG using Canvas
+        try {
+          const bitmap = await createImageBitmap(f)
+          const canvas = document.createElement('canvas')
+          canvas.width = bitmap.width
+          canvas.height = bitmap.height
+          const ctx = canvas.getContext('2d')!
+          ctx.drawImage(bitmap, 0, 0)
+          bitmap.close()
+
+          const blob = await new Promise<Blob>((resolve) => {
+            canvas.toBlob((b) => resolve(b!), 'image/png')
+          })
+          const newFile = new File([blob], f.name.replace(/\.[^.]+$/, '.png'), { type: 'image/png' })
+          convertedFiles.push(newFile)
+        } catch {
+          // If conversion fails, just add the original file
+          convertedFiles.push(f)
+        }
+      }
+    }
+
+    setFiles((prev) => [...prev, ...convertedFiles])
   }, [])
 
   const removeFile = (index: number) => {
@@ -41,10 +72,9 @@ export function ImageToPdfTool() {
       files.forEach((f) => formData.append('files', f))
       formData.append('orientation', orientation)
       formData.append('pageSize', pageSize)
-      const res = await fetch('/api/pdf/image-to-pdf', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Conversion failed')
-      setResult(data)
+      const res = await downloadFromApi('/api/pdf/image-to-pdf', formData)
+      setResult({ message: res.message })
+      triggerDownload(res.blob, res.fileName)
     } catch (err: unknown) {
       const e = err as Error
       setError(e.message || 'Processing failed – Please recheck your file.')
@@ -158,13 +188,7 @@ export function ImageToPdfTool() {
           <div className="flex-1">
             <p className="text-sm font-medium text-green-800">{result.message}</p>
           </div>
-          <a
-            href={result.downloadUrl}
-            className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            Download
-          </a>
+          <p className="text-xs text-green-600">Downloaded!</p>
         </div>
       )}
 

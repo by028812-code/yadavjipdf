@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, readFile, mkdir } from 'fs/promises'
-import { join } from 'path'
-import { v4 as uuidv4 } from 'uuid'
 import { PDFParse } from 'pdf-parse'
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
 
-const UPLOAD_DIR = join(process.cwd(), 'upload')
-const DOWNLOAD_DIR = join(process.cwd(), 'download')
-
 export async function POST(req: NextRequest) {
-  const jobId = uuidv4()
   try {
-    await mkdir(UPLOAD_DIR, { recursive: true })
-    await mkdir(DOWNLOAD_DIR, { recursive: true })
-
     const formData = await req.formData()
     const file = formData.get('file') as File
 
@@ -28,9 +18,8 @@ export async function POST(req: NextRequest) {
     const bytes = await file.arrayBuffer()
 
     // Extract text from PDF using pdf-parse
-    const parser = new PDFParse(Buffer.from(bytes))
-    const pdfData = await parser.getText()
-    const text = pdfData
+    const parser = new PDFParse(new Uint8Array(bytes))
+    const text = await parser.getText()
 
     if (!text || text.trim().length === 0) {
       return NextResponse.json(
@@ -41,7 +30,7 @@ export async function POST(req: NextRequest) {
 
     // Create DOCX using docx library
     const paragraphs: Paragraph[] = []
-    
+
     // Title
     paragraphs.push(
       new Paragraph({
@@ -51,13 +40,11 @@ export async function POST(req: NextRequest) {
       })
     )
 
-    // Split text into paragraphs and add to document
     const lines = text.split(/\n+/).filter(line => line.trim().length > 0)
-    
+
     for (const line of lines) {
       const trimmed = line.trim()
-      
-      // Detect if it's a heading (short line, possibly all caps or larger)
+
       if (trimmed.length < 60 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
         paragraphs.push(
           new Paragraph({
@@ -95,19 +82,18 @@ export async function POST(req: NextRequest) {
     })
 
     const docxBuffer = await Packer.toBuffer(doc)
-    const outputPath = join(DOWNLOAD_DIR, `converted_${jobId}.docx`)
-    await writeFile(outputPath, docxBuffer)
 
-    const outputFileName = `converted_${jobId}.docx`
-    return NextResponse.json({
-      success: true,
-      downloadUrl: `/api/pdf/download?file=${outputFileName}`,
-      fileName: outputFileName,
-      message: `Successfully converted PDF to Word (${lines.length} paragraphs extracted)`
+    return new NextResponse(docxBuffer, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': 'attachment; filename="converted.docx"',
+        'X-Message': `Successfully converted PDF to Word (${lines.length} paragraphs extracted)`,
+      },
     })
   } catch (error: unknown) {
     const err = error as Error
-    console.error(`[pdf-to-word] Error at ${err.stack || err.message}`)
+    console.error(`[pdf-to-word] Error: ${err.stack || err.message}`)
     return NextResponse.json(
       { error: 'Processing failed – Please recheck your file.' },
       { status: 500 }

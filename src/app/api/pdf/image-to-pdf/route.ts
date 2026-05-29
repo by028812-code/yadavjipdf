@@ -1,24 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PDFDocument } from 'pdf-lib'
-import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
-import { v4 as uuidv4 } from 'uuid'
-import sharp from 'sharp'
 
-const DOWNLOAD_DIR = join(process.cwd(), 'download')
-
-const SUPPORTED_IMAGE_TYPES = [
-  'image/jpeg', 'image/png', 'image/webp',
-  'image/jpg', 'image/bmp', 'image/tiff'
-]
-
-const SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif']
+const SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png']
 
 export async function POST(req: NextRequest) {
-  const jobId = uuidv4()
   try {
-    await mkdir(DOWNLOAD_DIR, { recursive: true })
-
     const formData = await req.formData()
     const files = formData.getAll('files') as File[]
     const orientation = (formData.get('orientation') as string) || 'portrait'
@@ -28,12 +14,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Please upload at least one image' }, { status: 400 })
     }
 
-    // Validate image files
     for (const file of files) {
       const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
-      if (!SUPPORTED_IMAGE_TYPES.includes(file.type) && !SUPPORTED_EXTENSIONS.includes(ext)) {
+      if (!SUPPORTED_EXTENSIONS.includes(ext) && !file.type.match(/^image\/(jpeg|png)$/)) {
         return NextResponse.json(
-          { error: `File "${file.name}" is not a supported image format. Please use JPG, PNG, or WebP.` },
+          { error: `File "${file.name}" is not supported. Please use JPG or PNG images only.` },
           { status: 400 }
         )
       }
@@ -41,7 +26,6 @@ export async function POST(req: NextRequest) {
 
     const pdfDoc = await PDFDocument.create()
 
-    // Page dimensions in points (1 inch = 72 points)
     const pageSizes: Record<string, { width: number; height: number }> = {
       'a4': { width: 595.28, height: 841.89 },
       'letter': { width: 612, height: 792 },
@@ -53,32 +37,33 @@ export async function POST(req: NextRequest) {
     const pageHeight = orientation === 'landscape' ? dims.width : dims.height
 
     for (const file of files) {
-      const imageBytes = await file.arrayBuffer()
-      
-      // Convert image to PNG/JPEG using sharp for consistency
-      let processedImage: Buffer
-      const sharpInstance = sharp(Buffer.from(imageBytes))
-      const metadata = await sharpInstance.metadata()
-      
-      if (metadata.channels === 4 || metadata.format === 'png' || metadata.format === 'webp') {
-        // Convert to PNG for alpha channel support
-        processedImage = await sharpInstance.png().toBuffer()
-      } else {
-        // Convert to JPEG for smaller size
-        processedImage = await sharpInstance.jpeg({ quality: 90 }).toBuffer()
-      }
+      const imageBytes = new Uint8Array(await file.arrayBuffer())
+      const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
 
-      // Embed image in PDF
       let image
-      const isPng = metadata.channels === 4 || metadata.format === 'png' || metadata.format === 'webp'
-      if (isPng) {
-        image = await pdfDoc.embedPng(processedImage)
-      } else {
-        image = await pdfDoc.embedJpg(processedImage)
+      try {
+        if (ext === '.png') {
+          image = await pdfDoc.embedPng(imageBytes)
+        } else {
+          image = await pdfDoc.embedJpg(imageBytes)
+        }
+      } catch {
+        // If embedding fails, try the other format
+        try {
+          if (ext === '.png') {
+            image = await pdfDoc.embedJpg(imageBytes)
+          } else {
+            image = await pdfDoc.embedPng(imageBytes)
+          }
+        } catch {
+          return NextResponse.json(
+            { error: `Could not process image "${file.name}". Please try a different image.` },
+            { status: 400 }
+          )
+        }
       }
 
-      // Scale image to fit page with margins
-      const margin = 36 // 0.5 inch margin
+      const margin = 36
       const maxWidth = pageWidth - 2 * margin
       const maxHeight = pageHeight - 2 * margin
       const scale = Math.min(maxWidth / image.width, maxHeight / image.height)
@@ -95,18 +80,18 @@ export async function POST(req: NextRequest) {
     }
 
     const pdfBytes = await pdfDoc.save()
-    const outputPath = join(DOWNLOAD_DIR, `images_to_pdf_${jobId}.pdf`)
-    await writeFile(outputPath, Buffer.from(pdfBytes))
 
-    return NextResponse.json({
-      success: true,
-      downloadUrl: `/api/pdf/download?file=images_to_pdf_${jobId}.pdf`,
-      fileName: `images_to_pdf_${jobId}.pdf`,
-      message: `Successfully converted ${files.length} image(s) to PDF`
+    return new NextResponse(pdfBytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="images_to_pdf.pdf"',
+        'X-Message': `Successfully converted ${files.length} image(s) to PDF`,
+      },
     })
   } catch (error: unknown) {
     const err = error as Error
-    console.error(`[image-to-pdf] Error at ${err.stack || err.message}`)
+    console.error(`[image-to-pdf] Error: ${err.stack || err.message}`)
     return NextResponse.json(
       { error: 'Processing failed – Please recheck your file.' },
       { status: 500 }

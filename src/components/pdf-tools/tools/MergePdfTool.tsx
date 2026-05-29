@@ -2,11 +2,12 @@
 
 import { useState, useCallback } from 'react'
 import { Upload, X, FileText, ArrowUpDown, Loader2, Download, CheckCircle } from 'lucide-react'
+import { downloadFromApi, triggerDownload } from '@/lib/download-utils'
 
 export function MergePdfTool() {
   const [files, setFiles] = useState<File[]>([])
   const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState<{ downloadUrl: string; fileName: string; message: string } | null>(null)
+  const [result, setResult] = useState<{ message: string; fileName: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
 
@@ -47,10 +48,9 @@ export function MergePdfTool() {
     try {
       const formData = new FormData()
       files.forEach((f) => formData.append('files', f))
-      const res = await fetch('/api/pdf/merge', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Merge failed')
-      setResult(data)
+      const result = await downloadFromApi('/api/pdf/merge', formData)
+      setResult({ message: result.message, fileName: result.fileName })
+      triggerDownload(result.blob, result.fileName)
     } catch (err: unknown) {
       const e = err as Error
       setError(e.message || 'Processing failed – Please recheck your file.')
@@ -149,13 +149,6 @@ export function MergePdfTool() {
           <div className="flex-1">
             <p className="text-sm font-medium text-green-800">{result.message}</p>
           </div>
-          <a
-            href={result.downloadUrl}
-            className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            Download
-          </a>
         </div>
       )}
 

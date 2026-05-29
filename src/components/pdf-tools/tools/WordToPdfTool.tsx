@@ -2,11 +2,12 @@
 
 import { useState } from 'react'
 import { Upload, X, FileText, Loader2, Download, CheckCircle } from 'lucide-react'
+import { downloadFromApi, triggerDownload } from '@/lib/download-utils'
 
 export function WordToPdfTool() {
   const [file, setFile] = useState<File | null>(null)
   const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState<{ downloadUrl: string; fileName: string; message: string } | null>(null)
+  const [result, setResult] = useState<{ message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleFile = (f: File) => {
@@ -30,10 +31,9 @@ export function WordToPdfTool() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('/api/pdf/word-to-pdf', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Conversion failed')
-      setResult(data)
+      const res = await downloadFromApi('/api/pdf/word-to-pdf', formData)
+      setResult({ message: res.message })
+      triggerDownload(res.blob, res.fileName)
     } catch (err: unknown) {
       const e = err as Error
       setError(e.message || 'Processing failed – Please recheck your file.')
@@ -90,7 +90,7 @@ export function WordToPdfTool() {
       )}
 
       <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
-        <strong>Powered by LibreOffice</strong> — Your Word document is converted to PDF using LibreOffice on our secure Indian servers.
+        <strong>Made in India</strong> — Your Word document is converted to PDF securely on our servers. Your files are never stored.
       </div>
 
       {/* Error */}
@@ -107,13 +107,7 @@ export function WordToPdfTool() {
           <div className="flex-1">
             <p className="text-sm font-medium text-green-800">{result.message}</p>
           </div>
-          <a
-            href={result.downloadUrl}
-            className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            Download PDF
-          </a>
+          <p className="text-xs text-green-600">Downloaded!</p>
         </div>
       )}
 

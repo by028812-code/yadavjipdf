@@ -1,18 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { PDFDocument } from 'pdf-lib'
-import { writeFile, readFile, mkdir, unlink } from 'fs/promises'
-import { join } from 'path'
-import { v4 as uuidv4 } from 'uuid'
-
-const UPLOAD_DIR = join(process.cwd(), 'upload')
-const DOWNLOAD_DIR = join(process.cwd(), 'download')
 
 export async function POST(req: NextRequest) {
-  const jobId = uuidv4()
   try {
-    await mkdir(UPLOAD_DIR, { recursive: true })
-    await mkdir(DOWNLOAD_DIR, { recursive: true })
-
     const formData = await req.formData()
     const files = formData.getAll('files') as File[]
 
@@ -23,7 +13,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Validate all files are PDFs
     for (const file of files) {
       if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
         return NextResponse.json(
@@ -45,18 +34,18 @@ export async function POST(req: NextRequest) {
     }
 
     const mergedBytes = await mergedPdf.save()
-    const outputPath = join(DOWNLOAD_DIR, `merged_${jobId}.pdf`)
-    await writeFile(outputPath, Buffer.from(mergedBytes))
 
-    return NextResponse.json({
-      success: true,
-      downloadUrl: `/api/pdf/download?file=merged_${jobId}.pdf`,
-      fileName: `merged_${jobId}.pdf`,
-      message: `Successfully merged ${files.length} PDFs`
+    return new NextResponse(mergedBytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="merged.pdf"',
+        'X-Message': `Successfully merged ${files.length} PDFs`,
+      },
     })
   } catch (error: unknown) {
     const err = error as Error
-    console.error(`[merge] Error at ${err.stack || err.message}`)
+    console.error(`[merge] Error: ${err.stack || err.message}`)
     return NextResponse.json(
       { error: 'Processing failed – Please recheck your file.' },
       { status: 500 }

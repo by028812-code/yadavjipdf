@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Upload, X, FileText, Loader2, Download, CheckCircle } from 'lucide-react'
+import { downloadFromApi, triggerDownload } from '@/lib/download-utils'
 
 const qualityOptions = [
   { value: 'screen', label: 'Low (Screen)', desc: '72 DPI — Smallest file size, good for screen viewing' },
@@ -14,7 +15,7 @@ export function CompressPdfTool() {
   const [file, setFile] = useState<File | null>(null)
   const [quality, setQuality] = useState('ebook')
   const [processing, setProcessing] = useState(false)
-  const [result, setResult] = useState<{ downloadUrl: string; fileName: string; message: string; originalSize?: number; compressedSize?: number; savingsPercent?: string } | null>(null)
+  const [result, setResult] = useState<{ message: string; originalSize?: number; compressedSize?: number; savingsPercent?: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleFile = (f: File) => {
@@ -38,10 +39,14 @@ export function CompressPdfTool() {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('quality', quality)
-      const res = await fetch('/api/pdf/compress', { method: 'POST', body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Compression failed')
-      setResult(data)
+      const res = await downloadFromApi('/api/pdf/compress', formData)
+      setResult({
+        message: res.message,
+        originalSize: res.originalSize,
+        compressedSize: res.compressedSize,
+        savingsPercent: res.savingsPercent,
+      })
+      triggerDownload(res.blob, res.fileName)
     } catch (err: unknown) {
       const e = err as Error
       setError(e.message || 'Processing failed – Please recheck your file.')
@@ -150,13 +155,7 @@ export function CompressPdfTool() {
               </div>
             </div>
           )}
-          <a
-            href={result.downloadUrl}
-            className="flex items-center justify-center gap-1.5 bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors w-full"
-          >
-            <Download className="w-4 h-4" />
-            Download Compressed PDF
-          </a>
+          <p className="text-xs text-green-600 text-center">File downloaded automatically!</p>
         </div>
       )}
 
