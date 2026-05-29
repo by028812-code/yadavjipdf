@@ -3,6 +3,8 @@ import { PDFDocument } from 'pdf-lib'
 
 const SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png']
 
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()

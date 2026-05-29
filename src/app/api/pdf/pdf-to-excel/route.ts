@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { PDFParse } from 'pdf-parse'
 import ExcelJS from 'exceljs'
+
+export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,13 +18,29 @@ export async function POST(req: NextRequest) {
 
     const bytes = await file.arrayBuffer()
 
-    // Extract text from PDF using pdf-parse
-    const parser = new PDFParse(new Uint8Array(bytes))
-    const text = await parser.getText()
+    // Extract text from PDF using pdf-parse with Vercel workaround
+    let text = ''
+    try {
+      // Dynamic import of pdf-parse core parser (bypasses test file loading on serverless)
+      const pdfParseModule = await import('pdf-parse/lib/pdf-parse.js')
+      const pdfParse = pdfParseModule.default || pdfParseModule
+      const data = await pdfParse(Buffer.from(bytes))
+      text = data.text || ''
+    } catch (importErr) {
+      // Fallback: try full pdf-parse module
+      try {
+        const pdfParseModule = await import('pdf-parse')
+        const pdfParse = pdfParseModule.default || pdfParseModule
+        const data = await pdfParse(Buffer.from(bytes))
+        text = data.text || ''
+      } catch (fallbackErr) {
+        console.error('[pdf-to-excel] pdf-parse import failed:', fallbackErr)
+      }
+    }
 
     if (!text || text.trim().length === 0) {
       return NextResponse.json(
-        { error: 'Could not extract text from this PDF. It may be image-based.' },
+        { error: 'Could not extract text from this PDF. It may be image-based or password-protected.' },
         { status: 400 }
       )
     }
